@@ -1,17 +1,5 @@
 {
   "framework": "nextjs",
   "buildCommand": "prisma generate && next build",
-  "installCommand": "npm install",
-  "env": {
-    "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY": "@clerk_publishable_key",
-    "CLERK_SECRET_KEY": "@clerk_secret_key",
-    "DATABASE_URL": "@database_url",
-    "GEMINI_API_KEY": "@gemini_api_key",
-    "TRIGGER_SECRET_KEY": "@trigger_secret_key",
-    "NEXT_PUBLIC_TRIGGER_PUBLIC_API_KEY": "@trigger_public_api_key",
-    "NEXT_PUBLIC_TRANSLOADIT_KEY": "@transloadit_key",
-    "TRANSLOADIT_SECRET": "@transloadit_secret",
-    "NEXT_PUBLIC_TRANSLOADIT_IMAGE_TEMPLATE_ID": "@transloadit_image_template_id",
-    "NEXT_PUBLIC_TRANSLOADIT_VIDEO_TEMPLATE_ID": "@transloadit_video_template_id"
-  }
+  "installCommand": "npm install"
 }
