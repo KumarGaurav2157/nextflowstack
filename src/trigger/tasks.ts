@@ -229,7 +229,10 @@ export const extractFrameTask = task({
     ) {
       await new Promise((r) => setTimeout(r, 2000));
       const poll = await fetch(
-        `https://api2.transloadit.com/assemblies/${assembly.assembly_id}`
+        `https://api2.transloadit.com/assemblies/${assembly.assembly_id}`,
+        {
+          headers: { Authorization: `Bearer ${payload.transloaditKey}` },
+        }
       );
       finalAssembly = await poll.json();
       attempts++;

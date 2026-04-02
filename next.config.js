@@ -1,16 +1,29 @@
 /** @type {import('next').NextConfig} */
+
+// Derive the hostname from NEXT_PUBLIC_APP_URL so this works in any environment.
+// Falls back to localhost:3000 for local dev when the env var is not set.
+function getAllowedOrigins() {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+  if (!appUrl) return ["localhost:3000"];
+  try {
+    const { host } = new URL(appUrl);
+    return [host];
+  } catch {
+    return ["localhost:3000"];
+  }
+}
+
 const nextConfig = {
   images: {
     remotePatterns: [
-      { protocol: "https", hostname: "*.transloadit.com" },
-      { protocol: "https", hostname: "*.cloudinary.com" },
+      { protocol: "https", hostname: "**.transloadit.com" },
+      { protocol: "https", hostname: "**.cloudinary.com" },
       { protocol: "https", hostname: "picsum.photos" },
     ],
   },
-  // Next.js 15: Server Actions are enabled by default
   experimental: {
     serverActions: {
-      allowedOrigins: ["localhost:3000"],
+      allowedOrigins: getAllowedOrigins(),
     },
   },
 };

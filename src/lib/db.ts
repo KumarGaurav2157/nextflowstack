@@ -1,21 +1,14 @@
-import { neonConfig } from "@neondatabase/serverless";
+// src/lib/db.ts
 import { PrismaClient } from "@prisma/client";
-import ws from "ws";
-
-// Tell Neon to use WebSockets
-neonConfig.webSocketConstructor = ws;
-neonConfig.poolQueryViaFetch = true;
 
 const globalForPrisma = globalThis as unknown as { prisma: PrismaClient };
 
 export const db =
   globalForPrisma.prisma ??
   new PrismaClient({
-    datasources: {
-      db: {
-        url: process.env.DATABASE_URL,
-      },
-    },
+    log: process.env.NODE_ENV === "development" ? ["query", "error", "warn"] : ["error"],
   });
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = db;
+// Persist the client across hot-reloads in development AND across
+// serverless function invocations in production to avoid connection exhaustion.
+globalForPrisma.prisma = db;
