@@ -1,7 +1,7 @@
 "use client";
 // src/components/workflow/HistoryPanel.tsx
 import { useState } from "react";
-import { CheckCircle2, XCircle, Clock, ChevronDown, ChevronRight } from "lucide-react";
+import { CheckCircle2, XCircle, Clock, ChevronDown, ChevronRight, ExternalLink } from "lucide-react";
 import type { WorkflowRunRecord, NodeRunRecord } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -63,7 +63,6 @@ function RunEntry({
 
   return (
     <div className="border border-border rounded-lg mb-1.5 overflow-hidden">
-      {/* Header row */}
       <button
         onClick={onToggle}
         className="w-full flex items-center gap-2 p-2.5 bg-surface hover:bg-surface-2 transition-colors text-left"
@@ -73,14 +72,11 @@ function RunEntry({
         <span className="font-mono text-[10px] text-text-3 flex-1 truncate">{run.scope}</span>
         <span className="font-mono text-[10px] text-text-3">{ts}{dur ? ` · ${dur}` : ""}</span>
         <StatusBadge status={run.status} />
-        {isExpanded ? (
-          <ChevronDown size={11} className="text-text-3 shrink-0" />
-        ) : (
-          <ChevronRight size={11} className="text-text-3 shrink-0" />
-        )}
+        {isExpanded
+          ? <ChevronDown size={11} className="text-text-3 shrink-0" />
+          : <ChevronRight size={11} className="text-text-3 shrink-0" />}
       </button>
 
-      {/* Expanded detail */}
       {isExpanded && (
         <div className="bg-bg-3 border-t border-border p-2 space-y-2">
           {run.nodeRuns.length === 0 ? (
@@ -96,21 +92,125 @@ function RunEntry({
   );
 }
 
+// ── Detect what kind of output a node produced ────────────────────
+function getOutputType(nr: NodeRunRecord): "image" | "video" | "text" | "url" | null {
+  if (!nr.output) return null;
+  const out = nr.output.trim();
+
+  // Image node or crop node output
+  if (nr.nodeType === "image" || nr.nodeType === "crop") return "image";
+
+  // Video node or extract frame output
+  if (nr.nodeType === "video") return "video";
+  if (nr.nodeType === "extract") return "image"; // extracted frame is an image
+
+  // Generic URL detection for any node
+  if (out.startsWith("http://") || out.startsWith("https://")) {
+    const lower = out.toLowerCase().split("?")[0]; // strip query params
+    if (lower.match(/\.(jpg|jpeg|png|gif|webp|avif)$/)) return "image";
+    if (lower.match(/\.(mp4|webm|mov|avi)$/))           return "video";
+    return "url";
+  }
+
+  return "text";
+}
+
 function NodeRunLine({ nr }: { nr: NodeRunRecord }) {
-  const dur = nr.durationMs ? `${(nr.durationMs / 1000).toFixed(1)}s` : "";
+  const [imgError, setImgError] = useState(false);
+  const dur     = nr.durationMs ? `${(nr.durationMs / 1000).toFixed(1)}s` : "";
   const success = nr.status === "SUCCESS";
+  const outType = getOutputType(nr);
+
   return (
-    <div>
+    <div className="space-y-1">
+      {/* Status row */}
       <div className="flex items-center gap-1.5">
         {success
           ? <CheckCircle2 size={11} className="text-success shrink-0" />
-          : <XCircle size={11} className="text-danger shrink-0" />}
+          : <XCircle     size={11} className="text-danger  shrink-0" />}
         <span className="font-mono text-[10px] text-text-2 flex-1 truncate">{nr.nodeLabel}</span>
         <span className="font-mono text-[10px] text-text-3">{dur}</span>
       </div>
-      {(nr.output || nr.errorMsg) && (
-        <p className="font-mono text-[9px] text-text-3 pl-4 mt-0.5 truncate max-w-[220px]">
-          ↳ {nr.output ? nr.output.slice(0, 45) + (nr.output.length > 45 ? "…" : "") : `Error: ${nr.errorMsg}`}
+
+      {/* Output preview */}
+      {nr.output && outType === "image" && !imgError && (
+        <div className="pl-4 space-y-1">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={nr.output}
+            alt={`Output of ${nr.nodeLabel}`}
+            className="w-full max-h-40 object-contain rounded border border-border bg-bg"
+            onError={() => setImgError(true)}
+          />
+          <a
+            href={nr.output}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 font-mono text-[9px] text-accent hover:underline"
+          >
+            <ExternalLink size={9} />
+            Open full size
+          </a>
+        </div>
+      )}
+
+      {nr.output && outType === "video" && (
+        <div className="pl-4 space-y-1">
+          <video
+            src={nr.output}
+            controls
+            className="w-full max-h-40 rounded border border-border bg-bg"
+          />
+          <a
+            href={nr.output}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 font-mono text-[9px] text-accent hover:underline"
+          >
+            <ExternalLink size={9} />
+            Open video
+          </a>
+        </div>
+      )}
+
+      {nr.output && outType === "url" && (
+        <div className="pl-4">
+          <a
+            href={nr.output}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 font-mono text-[9px] text-accent hover:underline break-all"
+          >
+            <ExternalLink size={9} className="shrink-0" />
+            {nr.output.length > 50 ? nr.output.slice(0, 50) + "…" : nr.output}
+          </a>
+        </div>
+      )}
+
+      {nr.output && outType === "text" && (
+        <p className="font-mono text-[9px] text-text-3 pl-4 mt-0.5 line-clamp-3">
+          ↳ {nr.output}
+        </p>
+      )}
+
+      {/* Image fallback to link if img fails to load */}
+      {nr.output && outType === "image" && imgError && (
+        <div className="pl-4">
+          <a
+            href={nr.output}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 font-mono text-[9px] text-accent hover:underline"
+          >
+            <ExternalLink size={9} />
+            View output image
+          </a>
+        </div>
+      )}
+
+      {nr.errorMsg && (
+        <p className="font-mono text-[9px] text-danger pl-4 mt-0.5 line-clamp-2">
+          ✕ {nr.errorMsg}
         </p>
       )}
     </div>
@@ -119,7 +219,7 @@ function NodeRunLine({ nr }: { nr: NodeRunRecord }) {
 
 function StatusIcon({ status }: { status: string }) {
   if (status === "SUCCESS") return <CheckCircle2 size={13} className="text-success shrink-0" />;
-  if (status === "FAILED") return <XCircle size={13} className="text-danger shrink-0" />;
+  if (status === "FAILED")  return <XCircle      size={13} className="text-danger  shrink-0" />;
   if (status === "PARTIAL") return <CheckCircle2 size={13} className="text-warning shrink-0" />;
   return <Clock size={13} className="text-warning animate-pulse shrink-0" />;
 }
@@ -127,7 +227,7 @@ function StatusIcon({ status }: { status: string }) {
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
     SUCCESS: "bg-success/10 text-success",
-    FAILED: "bg-danger/10 text-danger",
+    FAILED:  "bg-danger/10  text-danger",
     PARTIAL: "bg-warning/10 text-warning",
     RUNNING: "bg-warning/20 text-warning animate-pulse",
   };
