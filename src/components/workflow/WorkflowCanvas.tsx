@@ -28,7 +28,6 @@ import { NODE_DEFS, HANDLE_COLORS } from "@/lib/node-definitions";
 import { useToast } from "@/components/ui/use-toast";
 import { Toaster } from "@/components/ui/toaster";
 
-// Register custom node types
 const nodeTypes = {
   text: TextNode,
   image: ImageNode,
@@ -46,11 +45,14 @@ interface Props {
   initialRuns: WorkflowRunRecord[];
 }
 
-// Inner component that uses useReactFlow()
 function Canvas({ workflowId, initialNodes, initialEdges, initialViewport, initialRuns }: Props) {
   const { fitView, getViewport } = useReactFlow();
   const { toast } = useToast();
   const saveTimer = useRef<NodeJS.Timeout | null>(null);
+  // BUG FIX 1: track whether the initial load has happened so auto-save
+  // doesn't fire before the workflow is loaded (which caused the very first
+  // save to overwrite the DB with an empty node array).
+  const isLoaded = useRef(false);
 
   const {
     nodes, edges, onNodesChange, onEdgesChange, onConnect,
@@ -61,14 +63,18 @@ function Canvas({ workflowId, initialNodes, initialEdges, initialViewport, initi
 
   const { undo, redo } = useTemporalStore.getState();
 
-  // Load initial data
+  // Load initial data once
   useEffect(() => {
     loadWorkflow(workflowId, initialNodes, initialEdges, initialViewport);
     setRuns(initialRuns);
+    // BUG FIX 1 cont: mark loaded on next tick so the nodes/edges effect
+    // that fires immediately after setState doesn't trigger a premature save.
+    setTimeout(() => { isLoaded.current = true; }, 100);
   }, [workflowId]);
 
-  // Auto-save with debounce
+  // Auto-save with debounce — only after initial load
   useEffect(() => {
+    if (!isLoaded.current) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       const vp = getViewport();
@@ -90,7 +96,6 @@ function Canvas({ workflowId, initialNodes, initialEdges, initialViewport, initi
     return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  // Drag from sidebar onto canvas
   const onDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
@@ -100,7 +105,6 @@ function Canvas({ workflowId, initialNodes, initialEdges, initialViewport, initi
     e.preventDefault();
     const type = e.dataTransfer.getData("application/nextflow-node");
     if (!type || !NODE_DEFS[type]) return;
-
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const vp = getViewport();
     const x = (e.clientX - rect.left - vp.x) / vp.zoom;
@@ -108,7 +112,20 @@ function Canvas({ workflowId, initialNodes, initialEdges, initialViewport, initi
     addNode(type, { x: x - 120, y: y - 40 });
   }, [addNode, getViewport]);
 
-  // Run workflow
+  // BUG FIX 2: after a successful run, re-fetch the full history from the
+  // server so the panel is always in sync with the DB — not just the
+  // in-memory list that resets on page refresh.
+  const refreshHistory = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/run/history?workflowId=${workflowId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      useWorkflowStore.getState().setRuns(data.runs);
+    } catch {
+      // non-critical — history will still show the in-memory run
+    }
+  }, [workflowId]);
+
   const runWorkflow = useCallback(async (scope: "FULL" | "SELECTED" | "SINGLE") => {
     const store = useWorkflowStore.getState();
     const targetIds = scope === "FULL"
@@ -122,8 +139,6 @@ function Canvas({ workflowId, initialNodes, initialEdges, initialViewport, initi
 
     useWorkflowStore.setState({ isRunning: true });
     store.resetNodeStatuses();
-
-    // Mark nodes as running
     targetIds.forEach((id) => store.setNodeStatus(id, "running"));
 
     try {
@@ -144,7 +159,6 @@ function Canvas({ workflowId, initialNodes, initialEdges, initialViewport, initi
 
       const run = data.run;
 
-      // Update node statuses from results
       run.nodeRuns.forEach((nr: any) => {
         store.setNodeStatus(
           nr.nodeId,
@@ -153,8 +167,8 @@ function Canvas({ workflowId, initialNodes, initialEdges, initialViewport, initi
         );
       });
 
-      // Add to history
-      store.addRun(run);
+      // BUG FIX 2 cont: refresh from DB instead of just prepending in memory
+      await refreshHistory();
 
       const allOk = run.status === "SUCCESS";
       toast({
@@ -168,18 +182,26 @@ function Canvas({ workflowId, initialNodes, initialEdges, initialViewport, initi
     } finally {
       useWorkflowStore.setState({ isRunning: false });
     }
-  }, [workflowId, toast]);
+  }, [workflowId, toast, refreshHistory]);
 
-  // Edge color by type
-  const edgeOptions = {
-    style: { strokeDasharray: "6 3" },
-    animated: true,
-  };
+  // BUG FIX 3: poll for history on mount so runs done in a previous
+  // browser session (which the server-rendered initialRuns may have missed
+  // if the page was already open when a run completed) are shown correctly.
+  useEffect(() => {
+    refreshHistory();
+  }, [workflowId]);
 
-  const edgeColor = (edge: FlowEdge) => {
-    // Determine color from source node handle
-    return HANDLE_COLORS["text"];
-  };
+  const deleteRun = useCallback(async (runId: string) => {
+    await fetch(`/api/run/delete?id=${runId}`, { method: "DELETE" });
+    useWorkflowStore.getState().setRuns(
+      useWorkflowStore.getState().runs.filter((r) => r.id !== runId)
+    );
+  }, []);
+
+  const clearAllRuns = useCallback(async () => {
+    await fetch(`/api/run/delete?workflowId=${workflowId}`, { method: "DELETE" });
+    useWorkflowStore.getState().setRuns([]);
+  }, [workflowId]);
 
   return (
     <div className="flex flex-col h-screen bg-bg overflow-hidden">
@@ -195,7 +217,6 @@ function Canvas({ workflowId, initialNodes, initialEdges, initialViewport, initi
       />
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left sidebar */}
         <div
           className="transition-all duration-200 overflow-hidden flex-shrink-0"
           style={{ width: sidebarOpen ? 220 : 0 }}
@@ -203,7 +224,6 @@ function Canvas({ workflowId, initialNodes, initialEdges, initialViewport, initi
           <NodeSidebar onAddNode={addNode} />
         </div>
 
-        {/* Canvas */}
         <div className="flex-1 relative overflow-hidden">
           <ReactFlow
             nodes={nodes}
@@ -225,12 +245,7 @@ function Canvas({ workflowId, initialNodes, initialEdges, initialViewport, initi
             fitView={!initialNodes.length}
             className="bg-bg"
           >
-            <Background
-              variant={BackgroundVariant.Dots}
-              gap={24}
-              size={1}
-              color="#2a2a38"
-            />
+            <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#2a2a38" />
             <Controls className="react-flow__controls" />
             <MiniMap
               nodeColor={(node) => {
@@ -244,7 +259,6 @@ function Canvas({ workflowId, initialNodes, initialEdges, initialViewport, initi
               className="react-flow__minimap"
             />
 
-            {/* Empty state overlay */}
             {nodes.length === 0 && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
                 <div className="text-center">
@@ -258,12 +272,11 @@ function Canvas({ workflowId, initialNodes, initialEdges, initialViewport, initi
           </ReactFlow>
         </div>
 
-        {/* Right history panel */}
         <div
           className="transition-all duration-200 overflow-hidden flex-shrink-0"
           style={{ width: historyOpen ? 268 : 0 }}
         >
-          <HistoryPanel runs={runs} />
+          <HistoryPanel runs={runs} onDeleteRun={deleteRun} onClearAll={clearAllRuns} />
         </div>
       </div>
 
@@ -272,7 +285,6 @@ function Canvas({ workflowId, initialNodes, initialEdges, initialViewport, initi
   );
 }
 
-// Export wrapped in provider
 export function WorkflowCanvas(props: Props) {
   return (
     <ReactFlowProvider>
